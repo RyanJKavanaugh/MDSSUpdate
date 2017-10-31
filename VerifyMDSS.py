@@ -8,7 +8,12 @@ import time
 import unittest
 import json
 import requests
+from pyvirtualdisplay import Display
 # -*- coding: utf-8 -*-
+
+def AdjustResolution():
+    display = Display(visible=0, size=(800, 800))
+    display.start()
 
 # /Users/ryankavanaugh/Desktop/QA/MDSS\ Update/
 # Make sure this test only goes to staging and does not hit prod
