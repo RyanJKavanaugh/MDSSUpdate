@@ -15,6 +15,8 @@ def AdjustResolution():
     display = Display(visible=0, size=(800, 800))
     display.start()
 
+AdjustResolution()
+
 # /Users/ryankavanaugh/Desktop/QA/MDSS\ Update/
 # Make sure this test only goes to staging and does not hit prod
 # //*[data-test-description-segments]
