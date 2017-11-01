@@ -8,6 +8,7 @@ import time
 import unittest
 import json
 import requests
+import xlrd
 from pyvirtualdisplay import Display
 # -*- coding: utf-8 -*-
 
@@ -15,32 +16,54 @@ def AdjustResolution():
     display = Display(visible=0, size=(800, 800))
     display.start()
 
-AdjustResolution()
+# Open corresponding Excel Workbook
+workbook = xlrd.open_workbook('MDSSTestInputs.xlsx')
+worksheet = workbook.sheet_by_index(0)
+worksheetUrls = workbook.sheet_by_index(1)
+
+# Jenkins Resolution Variable (i.e. required function for Jenkins virtual machine)
+adjustResolution = worksheet.cell(1, 5).value
+
+# API Call data
+authTokenURL = worksheetUrls.cell(1, 0).value
+currentConditionsAPIURL = worksheetUrls.cell(1, 1).value
+tgWebURL = worksheetUrls.cell(1, 2).value
+apiJson = worksheet.cell(1, 1).value
+userName = worksheet.cell(1, 3).value
+password = worksheet.cell(1, 4).value
+
+# TG Web fields
+toolTipStatement = worksheet.cell(1, 0).value
+expectedStatement = worksheet.cell(1, 2).value
+
+if adjustResolution == 1:
+    AdjustResolution()
 
 # /Users/ryankavanaugh/Desktop/QA/MDSS\ Update/
 # Make sure this test only goes to staging and does not hit prod
-# //*[data-test-description-segments]
+
+def Create_TG_Segments_Event():
+    # Get auth token from API
+    myResponse = requests.post(authTokenURL, json={'userName': userName, 'password': password})
+    jData = json.loads(myResponse.content)
+    AuthID = jData.get('id')
+    # Post a new snow event to the API
+    headers = {'x-crc-authToken': AuthID, 'Accept': 'application/json'}  # , 'text':'javascript'}
+    currentConditionsResponse = requests.post(currentConditionsAPIURL, headers=headers, json=apiJson)
+    return headers
+
+
 class Verify_MDSS_Data(unittest.TestCase):
 
     def test_mdss_data(self):
 
-        # Get auth token from API
-        url = 'http://mn.carsstage.org/segments_v1/api/authTokens'
-        myResponse = requests.post(url, json={'userName': 'ryan', 'password': 'qa'})
-        jData = json.loads(myResponse.content)
-        AuthID = jData.get('id')
-
-        # Post a new snow event to the API
-        currentConditionsAPIURL = 'http://mn.carsstage.org/segments_v1/api/currentConditions'
-        headers = {'x-crc-authToken':AuthID, 'Accept':'application/json'} #, 'text':'javascript'}
-        currentConditionsResponse = requests.post(currentConditionsAPIURL, headers=headers, json={"segmentIds":[149],"conditions":[{"categoryId":1,"conditionIds":[3]},{"categoryId":3,"conditionIds":[13]}]})
-        #print currentConditionsResponse
+        # Create a new TG Segments Event. Return AuthToken API headers for deleting event later on.
+        headers = Create_TG_Segments_Event()
 
         # Link to TG WEB Staging API, open up TG WEB Winter Conditions Road Report
-        TGWEBURL = 'http://mnwebtg.carsstage.org/tgevents/api/eventMapFeatures/'
         tgWebDict = {}
         driver = webdriver.Chrome()
-        driver.get(TGWEBURL)
+        driver.get(tgWebURL)
 
         # Get all the json from the API
         data = driver.find_element_by_tag_name('body').text
@@ -55,42 +78,46 @@ class Verify_MDSS_Data(unittest.TestCase):
 
         # Assert MDSS data is a part of Winter Driving Events
         for roadReportsNum in tgWebDict:
-            if 'Roadway is completely covered with snow' in tgWebDict[roadReportsNum]:
+            if toolTipStatement in tgWebDict[roadReportsNum]:
 
-                roadReportsURL = 'http://mnwebtg.carsstage.org/#roadReports/eventAlbum/' + str(roadReportsNum) + '?timeFrame=TODAY&layers=winterDriving%2CvoxReports%2Cflooding'
+                roadReportsURL = 'http://mnwebtg.carsstage.org/#roadReports/eventAlbum/' + str(roadReportsNum) #+ '?timeFrame=TODAY&layers=winterDriving%2CvoxReports%2Cflooding'
                 driver.get(roadReportsURL)
 
                 # Assert Album View Has Been Populated Properly
-                mdssWait = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, "//*[@data-test-desc-source]")))
+                mdssWait = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CLASS_NAME, "eventGalleryBodyText")))
 
-                mdsssTextTest = driver.find_elements_by_xpath("//*[@data-test-desc-source]")
-                for item in mdsssTextTest:
-                    if 'computers' in item.text:
-                        mdssUpdateText = item.text
-                    if 'roadway' in item.text:
-                        weatherUpdate = item.text
+                if driver.find_element_by_xpath('//*[@data-test-desc-source="mdss"]').is_displayed() == True:
+                    mdsssTextTest = driver.find_elements_by_xpath("//*[@data-test-desc-source]")
+                    for item in mdsssTextTest:
+                        if 'computers' in item.text:
+                            mdssUpdateText = item.text
+                        if 'roadway' in item.text:
+                            weatherUpdate = item.text
 
 
-                # Assert the datat from TG Segments is correct
-                print 'Roadway'
-                print weatherUpdate
-                assert 'staff reported that the roadway is completely covered with snow' in weatherUpdate
+                    # Assert the datat from TG Segments is correct
+                    print 'Roadway'
+                    assert expectedStatement in weatherUpdate
 
-                # Assert the MDSS data is correct
-                # Getting the MDSS 'computers predicted...' phrase
-                roadReport =  tgWebDict[roadReportsNum]
-                start = ', '
-                end = '.'
-                mdssWords = roadReport[roadReport.find(start)+len(start):roadReport.rfind(end)]
-                mdssList = mdssWords.split()
+                    # Assert the MDSS data is correct
+                    roadReport =  tgWebDict[roadReportsNum]
+                    start = ', '
+                    end = '.'
+                    mdssWords = roadReport[roadReport.find(start)+len(start):roadReport.rfind(end)]
+                    mdssList = mdssWords.split()
 
-                print 'MDSS'
-                print mdssUpdateText
-                assert 'our computers predicted' in mdssUpdateText
+                    print 'MDSS'
+                    # Check that road report data from the JSon is correctly displayed in TG-Web
+                    for mdssWord in mdssList:
+                        print mdssWord
+                        assert mdssWord in mdssUpdateText
 
-                for mdssWord in mdssList:
-                    print mdssWord
-                    assert mdssWord in mdssUpdateText
+                else:
+                    # If no MDSS data is present, asser that the user's input in TG Segments is correctly displayed
+                    gallery = driver.find_element_by_class_name('eventGallerySideMargin')
+                    print gallery.text
+                    print 'No MDSS data present'
+                    assert expectedStatement in gallery.text
 
 
         driver.quit()
